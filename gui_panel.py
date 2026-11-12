@@ -17,6 +17,18 @@ class UnwrellaPanel(bpy.types.Panel):
     unwrellaProps = context.scene.UnwrellaProps
     unwrellaObjProps = context.object.UnwrellaObjProps
 
+    box = layout.box()
+    box.label(text="Smart UV Project", icon="UV")
+    box.prop(unwrellaProps, "smart_angle_limit")
+    box.prop(unwrellaProps, "smart_margin_method")
+    box.prop(unwrellaProps, "smart_island_margin")
+    box.prop(unwrellaProps, "smart_rotate_method")
+    box.prop(unwrellaProps, "smart_area_weight")
+    box.prop(unwrellaProps, "smart_correct_aspect")
+    box.prop(unwrellaProps, "smart_scale_to_bounds")
+    box.operator("unwrellaoperator.smart_unwrap", text="Smart UV Unwrap")
+    layout.separator()
+
     if (unwrellaParams["AppAccess"] != AppAccess.NONE):
       row = layout.row()
       row.scale_y = 3.0
@@ -118,8 +130,8 @@ class UnwrellaPanel(bpy.types.Panel):
 
     else:
       layout.label(text="Unwrella-IO not found.", icon="ERROR")
-      layout.label(text="This add-on requires Unwrella-IO")
-      layout.label(text="or Blender-IO to be installed.")
+      layout.label(text="External unwrap and pack require")
+      layout.label(text="Unwrella-IO or Packer-IO.")
       layout.label(text="If it is installed try setting the path")
       layout.label(text="manually in 'Preferences - Add-ons'.")
       layout.label(text="Check the documentation for details.")

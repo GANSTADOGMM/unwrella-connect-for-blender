@@ -1,7 +1,24 @@
+import math
 from bpy.types import PropertyGroup
 from bpy.props import (StringProperty, BoolProperty, IntProperty, FloatProperty, EnumProperty)
 
 class UnwrellaProperties(PropertyGroup):
+  smart_angle_limit: FloatProperty(name="Angle Limit", description="Angle limit for projection groups", subtype='ANGLE', default=math.radians(66.0), min=0.0, max=math.radians(90.0))
+  smart_margin_method: EnumProperty(name="Margin Method", description="How island margin is measured", items=[
+    ('SCALED', "Scaled", "Scale the margin using existing UVs"),
+    ('ADD', "Add", "Add the margin without scaling"),
+    ('FRACTION', "Fraction", "Use a fraction of the final UV output"),
+  ], default='FRACTION')
+  smart_island_margin: FloatProperty(name="Island Margin", description="Space between UV islands", default=0.02, min=0.0, max=1.0)
+  smart_rotate_method: EnumProperty(name="Island Rotation", description="How to orient UV islands when packing", items=[
+    ('AXIS_ALIGNED', "Automatic", "Align to a minimal rectangle"),
+    ('AXIS_ALIGNED_X', "Horizontal", "Align islands horizontally"),
+    ('AXIS_ALIGNED_Y', "Vertical", "Align islands vertically"),
+  ], default='AXIS_ALIGNED_Y')
+  smart_area_weight: FloatProperty(name="Area Weight", description="Weight projection directions by face area", default=0.0, min=0.0, max=1.0)
+  smart_correct_aspect: BoolProperty(name="Correct Aspect", description="Account for the active image aspect ratio", default=True)
+  smart_scale_to_bounds: BoolProperty(name="Scale to Bounds", description="Scale the result to the UV tile bounds", default=False)
+
   uio_combine: BoolProperty(name="Combine", description="Pack all selected objects in one UV Sheet", default = True)
   uio_selection_only: BoolProperty(name="Selection", description="Pack only selected faces", default = False)
   uio_width: IntProperty(name="w:", description="UV Sheet Width", default = 1024, min = 1)
