@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { isIP } from 'node:net';
 import { createReadStream } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,10 +14,10 @@ const maxBody = 60 * 1024 * 1024 + 64 * 1024;
 let running = 0;
 const send = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); };
 
-function runWorker(dir, signal) {
+function runWorker(dir, signal, spawnWorker) {
   return new Promise((resolvePromise, reject) => {
     if (signal.aborted) return reject(new Error('Client disconnected'));
-    const child = spawn(process.env.BLENDER_PYTHON || 'python3', [join(root, 'unwrap.py'), dir], { cwd: dir, env: { ...process.env, HOME: dir }, stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawnWorker(process.env.BLENDER_PYTHON || 'python3', [join(root, 'unwrap.py'), dir], { cwd: dir, env: { ...process.env, HOME: dir }, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-4000); });
     const stop = () => child.kill('SIGKILL');
@@ -47,7 +48,7 @@ function readBody(req, timeoutMs) {
   });
 }
 
-async function unwrap(req, res, uploadTimeoutMs) {
+async function unwrap(req, res, uploadTimeoutMs, spawnWorker) {
   if (running >= 2) { req.resume(); return send(res, 503, { error: 'The unwrap engine is busy. Please try again.' }); }
   running++;
   const controller = new AbortController();
@@ -73,7 +74,7 @@ async function unwrap(req, res, uploadTimeoutMs) {
     // OBJ material libraries can reference arbitrary files. Geometry and UVs are self-contained.
     const safeObj = data.obj.replace(/^\s*mtllib\s+.*$/gim, '');
     await Promise.all([writeFile(join(dir, 'input.obj'), safeObj), writeFile(join(dir, 'settings.json'), JSON.stringify({ angle, margin, areaWeight }))]);
-    await runWorker(dir, controller.signal);
+    await runWorker(dir, controller.signal, spawnWorker);
     const obj = await readFile(join(dir, 'output.obj'), 'utf8');
     if (!controller.signal.aborted) return send(res, 200, { obj });
   } catch (error) {
@@ -89,14 +90,28 @@ async function unwrap(req, res, uploadTimeoutMs) {
   }
 }
 
+function isLocalHost(authority) {
+  if (typeof authority !== 'string') return false;
+  const match = authority.match(/^(?:\[([0-9a-fA-F:]+)\]|([^:[\]\s/?#@\\]+))(?::([0-9]+))?$/);
+  if (!match || (match[3] !== undefined && Number(match[3]) > 65535)) return false;
+  if (match[1]) {
+    return isIP(match[1]) === 6 && new URL(`http://[${match[1]}]`).hostname === '[::1]';
+  }
+  const hostname = match[2].toLowerCase();
+  return hostname === 'localhost' || (isIP(hostname) === 4 && hostname.startsWith('127.'));
+}
+
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json' };
-export function createServer({ uploadTimeoutMs = 30000 } = {}) {
+export function createServer({ uploadTimeoutMs = 30000, spawnWorker = spawn } = {}) {
   return http.createServer(async (req, res) => {
     let pathname;
     try { pathname = new URL(req.url, 'http://localhost').pathname; }
     catch { return send(res, 400, { error: 'Invalid request target.' }); }
     if (req.method === 'POST' && pathname === '/api/unwrap') {
       const origin = req.headers.origin;
+      if (!process.env.PUBLIC_ORIGIN && !isLocalHost(req.headers.host)) {
+        req.resume(); return send(res, 403, { error: 'Host not allowed.' });
+      }
       const expectedOrigin = process.env.PUBLIC_ORIGIN || `http://${req.headers.host}`;
       if ((origin && origin !== expectedOrigin) || req.headers['sec-fetch-site'] === 'cross-site') {
         req.resume(); return send(res, 403, { error: 'Cross-site requests are not allowed.' });
@@ -104,7 +119,7 @@ export function createServer({ uploadTimeoutMs = 30000 } = {}) {
       if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) {
         req.resume(); return send(res, 415, { error: 'Content-Type must be application/json.' });
       }
-      return unwrap(req, res, uploadTimeoutMs);
+      return unwrap(req, res, uploadTimeoutMs, spawnWorker);
     }
     if (req.method === 'GET' && pathname === '/api/health') return send(res, 200, { status: 'ok' });
     if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });

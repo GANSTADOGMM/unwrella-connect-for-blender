@@ -12,7 +12,6 @@ spec = importlib.util.spec_from_file_location(
 addon = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = addon
 spec.loader.exec_module(addon)
-addon.register()
 
 
 def clear_scene():
@@ -134,7 +133,11 @@ def test_empty_selection():
   assert bpy.ops.unwrellaoperator.smart_unwrap() == {'CANCELLED'}
 
 
+preferences_entry = None
 try:
+  preferences_entry = bpy.context.preferences.addons.new()
+  preferences_entry.module = spec.name
+  addon.register()
   test_object_mode()
   test_edit_selection()
   test_shared_mesh_and_settings()
@@ -142,5 +145,20 @@ try:
   test_empty_selection()
   print('Smart unwrap integration tests passed')
 finally:
-  clear_scene()
-  addon.unregister()
+  try:
+    clear_scene()
+  finally:
+    # Registration can fail after creating only some of its Blender resources.
+    bpy.msgbus.clear_by_owner(addon.subscriptionOwner)
+    icons = addon.unwrellaParams.get('icons')
+    if icons:
+      bpy.utils.previews.remove(icons)
+    for cls in reversed(addon.registered_classes):
+      bpy.utils.unregister_class(cls)
+    addon.registered_classes.clear()
+    for owner, name in ((bpy.types.Scene, 'UnwrellaProps'), (bpy.types.Object, 'UnwrellaObjProps')):
+      if hasattr(owner, name):
+        delattr(owner, name)
+    if preferences_entry is not None:
+      bpy.context.preferences.addons.remove(preferences_entry)
+    sys.modules.pop(spec.name, None)

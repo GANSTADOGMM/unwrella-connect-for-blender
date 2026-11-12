@@ -1,12 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, readFile, rm, writeFile, chmod } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from '../server.js';
 
-const server = createServer({ uploadTimeoutMs: 3000 });
+let workerFixture;
+const server = createServer({
+  uploadTimeoutMs: 3000,
+  spawnWorker: (command, args, options) => spawn(workerFixture ? process.execPath : command, workerFixture ? [workerFixture] : args, options),
+});
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 const post = data => fetch(`${base}/api/unwrap`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
@@ -41,6 +46,30 @@ test('rejects cross-site and non-JSON unwrap requests', async () => {
   options.body = '{}';
   assert.equal((await fetch(`${base}/api/unwrap`, options)).status, 400);
   assert.equal((await fetch(`${base}/api/unwrap`, {method:'POST',headers:{'Content-Type':'text/plain'},body:'{}'})).status, 415);
+});
+test('restricts default hosts and preserves the configured public origin', async () => {
+  const request = host => new Promise((resolve, reject) => {
+    const req = http.request(`${base}/api/unwrap`, {method:'POST',headers:{'Content-Type':'application/json',Host:host}}, res => {
+      res.resume(); res.on('end', () => resolve({status:res.statusCode}));
+    });
+    req.on('error', reject); req.end('{}');
+  });
+  for (const host of ['localhost', 'localhost:3000', '127.0.0.1', '127.1.2.3:80', '[::1]', '[0:0:0:0:0:0:0:1]:3000']) {
+    assert.equal((await request(host)).status, 400, host);
+  }
+  for (const host of ['attacker.example', 'localhost.attacker.example', '127.0.0.1:65536', '[::1]:bad', '[::2]', 'localhost:', 'user@localhost', '127.1', 'localhost/path']) {
+    assert.equal((await request(host)).status, 403, host);
+  }
+  const previous = process.env.PUBLIC_ORIGIN;
+  try {
+    process.env.PUBLIC_ORIGIN = 'https://studio.example.com';
+    const options = {method:'POST', headers:{'Content-Type':'application/json',Host:'studio.example.com',Origin:'https://studio.example.com'},body:'{}'};
+    assert.equal((await fetch(`${base}/api/unwrap`,options)).status,400);
+    options.headers.Origin = 'https://attacker.example';
+    assert.equal((await fetch(`${base}/api/unwrap`,options)).status,403);
+  } finally {
+    if (previous === undefined) delete process.env.PUBLIC_ORIGIN; else process.env.PUBLIC_ORIGIN = previous;
+  }
 });
 test('limits requests while their bodies are still uploading and releases the slots', async () => {
   const openUpload = () => {
@@ -92,13 +121,10 @@ test('releases a slot when a client abandons an upload', async () => {
 
 test('terminates the worker after a client disconnects', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'unwrella-test-'));
-  const script = join(temp, 'worker');
+  const script = join(temp, 'worker.cjs');
   const pidFile = join(temp, 'pid');
-  const previousPython = process.env.BLENDER_PYTHON;
-  await writeFile(script, '#!/usr/bin/env node\nrequire("fs").writeFileSync(process.env.STUB_PID_PATH, String(process.pid)); setInterval(() => {}, 1000);\n');
-  await chmod(script, 0o755);
-  process.env.BLENDER_PYTHON = script;
-  process.env.STUB_PID_PATH = pidFile;
+  await writeFile(script, `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`);
+  workerFixture = script;
   let req;
   try {
     req = http.request(`${base}/api/unwrap`, { method:'POST', headers:{'Content-Type':'application/json'} });
@@ -119,8 +145,7 @@ test('terminates the worker after a client disconnects', async () => {
     assert.ok(stopped, 'worker exited after disconnect');
   } finally {
     if (req) req.destroy();
-    if (previousPython === undefined) delete process.env.BLENDER_PYTHON; else process.env.BLENDER_PYTHON = previousPython;
-    delete process.env.STUB_PID_PATH;
+    workerFixture = undefined;
     await rm(temp, { recursive:true, force:true });
   }
 });
