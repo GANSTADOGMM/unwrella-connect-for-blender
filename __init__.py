@@ -5,6 +5,7 @@ from .app_params import unwrellaParams
 from .gui_panel import UnwrellaPanel
 from .operators import (UnwrapOperator, QuickPackOperator, SizeOperator, RotationOperator, FullRotationOperator,
   ClearMapOperator)
+from .smart_unwrap import SmartUnwrapOperator
 from .object_properties import UnwrellaObjectProperties
 from .properties import UnwrellaProperties
 from .preferences import UnwrellaPreferences
@@ -12,7 +13,7 @@ from .util import Util
 
 registered_classes = []
 classes = (UnwrellaPreferences, UnwrellaProperties, UnwrellaObjectProperties, UnwrellaPanel, UnwrapOperator,
-  QuickPackOperator, SizeOperator, RotationOperator, FullRotationOperator, ClearMapOperator)
+  QuickPackOperator, SizeOperator, RotationOperator, FullRotationOperator, ClearMapOperator, SmartUnwrapOperator)
 
 subscriptionOwner = object()
 
